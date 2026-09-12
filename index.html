@@ -1,14 +1,268 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Game Hub</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nuhad's Gaming Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#050705;
+    --green:#39ff6a;
+    --green-dim:#1f7a3a;
+    --amber:#ffb347;
+    --line: rgba(57,255,106,0.25);
+    --ink:#d9ffe4;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:'JetBrains Mono', monospace;
+    line-height:1.6; font-size:15px;
+    -webkit-font-smoothing:antialiased;
+  }
+  @media (prefers-reduced-motion: reduce){ *{animation-duration:.001s !important; animation-iteration-count:1 !important;} }
+
+  .crt{
+    position:fixed; inset:0; pointer-events:none; z-index:5;
+    background:repeating-linear-gradient(180deg, rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px, transparent 1px, transparent 3px);
+    opacity:0.35;
+  }
+
+  .wrap{ max-width:900px; margin:0 auto; padding:40px 22px 80px; }
+
+  .win{
+    border:1px solid var(--line);
+    background:#080a08;
+    margin-bottom:26px;
+  }
+  .win-bar{
+    display:flex; align-items:center; gap:8px;
+    padding:8px 12px; border-bottom:1px solid var(--line);
+    font-size:0.78rem; color:var(--green-dim);
+  }
+  .win-bar .dots{ display:flex; gap:6px; margin-right:8px; }
+  .win-bar .dots span{ width:9px; height:9px; border-radius:50%; background:#1f2b1f; }
+  .win-body{ padding:20px; }
+
+  .prompt{ color:var(--green); }
+  .prompt::before{ content:"$ "; color:var(--green-dim); }
+  .comment{ color:var(--green-dim); }
+
+  header{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:18px 22px; border-bottom:1px solid var(--line);
+    font-size:0.85rem;
+  }
+  header a{ color:var(--ink); text-decoration:none; margin-left:22px; }
+  header a:hover{ color:var(--green); }
+  .brand{ color:var(--green); }
+
+  .hero h1{
+    font-size:clamp(1.4rem, 4vw, 2rem);
+    color:var(--green);
+    margin:14px 0 10px;
+    white-space:pre-wrap;
+  }
+  .cursor{ display:inline-block; width:10px; height:1.1em; background:var(--green); vertical-align:middle; animation:blink 1s steps(1) infinite; }
+  @keyframes blink{ 50%{ opacity:0; } }
+  .hero p{ color:var(--ink); opacity:0.85; margin-bottom:4px; }
+
+  h2.section-title{
+    color:var(--green); font-size:1rem; margin-bottom:16px;
+  }
+  h2.section-title::before{ content:"## "; color:var(--green-dim); }
+
+  .listing{ display:flex; flex-direction:column; }
+  .row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:12px 0; border-bottom:1px dashed var(--line);
+    gap:14px; flex-wrap:wrap;
+  }
+  .row:last-child{ border-bottom:none; }
+  .row .path{ color:var(--ink); }
+  .row .path .flag{ color:var(--green-dim); }
+  .row .desc{ color:var(--green-dim); font-size:0.82rem; flex:1; min-width:200px; }
+  .tag{
+    font-size:0.72rem; padding:3px 8px; border:1px solid var(--line);
+  }
+  .tag.online{ color:var(--green); border-color:var(--green); }
+  .tag.locked{ color:var(--amber); border-color:rgba(255,179,71,0.4); }
+  .run{
+    color:var(--bg); background:var(--green);
+    padding:5px 12px; text-decoration:none; font-size:0.78rem; font-weight:700;
+  }
+  .run.disabled{ background:transparent; color:var(--green-dim); border:1px solid var(--line); cursor:default; }
+
+  pre.table{ color:var(--ink); font-size:0.82rem; overflow-x:auto; }
+  pre.table .hi{ color:var(--green); }
+
+  .flags{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
+  .flag-btn{
+    font-family:'JetBrains Mono', monospace; font-size:0.78rem;
+    background:transparent; color:var(--green-dim);
+    border:1px solid var(--line); padding:6px 12px;
+    cursor:pointer;
+  }
+  .flag-btn:hover{ color:var(--ink); }
+  .flag-btn.active{ color:var(--bg); background:var(--green); border-color:var(--green); }
+  .flag-btn:disabled{ opacity:0.4; cursor:not-allowed; }
+  .board-pane{ display:none; }
+  .board-pane.active{ display:block; }
+  .row.clickable{ cursor:pointer; }
+  .row.clickable:hover .path{ color:var(--green); }
+
+  .how-list{ list-style:none; }
+  .how-list li{ padding:10px 0; border-bottom:1px dashed var(--line); }
+  .how-list li:last-child{ border-bottom:none; }
+  .how-list .n{ color:var(--green-dim); margin-right:8px; }
+
+  footer{
+    border-top:1px solid var(--line); padding:20px 22px;
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;
+    font-size:0.8rem; color:var(--green-dim);
+  }
+</style>
 </head>
 <body>
-    <h1>Game Hub</h1>
-    <ul>
-        <li><a href="/games/cosmic-invaders/">Cosmic Invaders</a></li>
-    </ul>
-    <!-- Replace this file with the real landing page whenever you have it ready -->
+<div class="crt"></div>
+
+<header>
+  <span class="brand">nuhad@hub:~$</span>
+  <div>
+    <a href="#games">games</a>
+    <a href="#rankings">rankings</a>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="win hero">
+    <div class="win-bar"><span class="dots"><span></span><span></span><span></span></span> nuhad@hub: ~/gaming-hub</div>
+    <div class="win-body">
+      <p class="comment">// welcome to</p>
+      <h1>NUHAD'S GAMING HUB<span class="cursor"></span></h1>
+      <p>No download and no account. Pick a module, drop in, and leave your mark on the board.</p>
+    </div>
+  </div>
+
+  <div id="games">
+    <h2 class="section-title">games --list</h2>
+    <div class="win">
+      <div class="win-bar"><span class="dots"><span></span><span></span><span></span></span> ./games</div>
+      <div class="win-body listing">
+        <div class="row">
+          <div>
+            <div class="path">./cosmic-invaders.sh <span class="flag">[rwx]</span></div>
+            <div class="desc">Endless waves, a boss every third round, four squad types before things speed up.</div>
+          </div>
+          <span class="tag online">ONLINE</span>
+          <a class="run" href="./games/cosmic-invaders/">RUN</a>
+        </div>
+        <div class="row">
+          <div>
+            <div class="path">./module-02.sh <span class="flag">[---]</span></div>
+            <div class="desc">A second module is being built. It'll connect to the same board as everything else.</div>
+          </div>
+          <span class="tag locked">LOCKED</span>
+          <span class="run disabled">WAIT</span>
+        </div>
+        <div class="row">
+          <div>
+            <div class="path">./module-03.sh <span class="flag">[---]</span></div>
+            <div class="desc">Slot three is open. Check back to see what launches here next.</div>
+          </div>
+          <span class="tag locked">LOCKED</span>
+          <span class="run disabled">WAIT</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h2 class="section-title">how it works</h2>
+    <div class="win">
+      <div class="win-body">
+        <ul class="how-list">
+          <li><span class="n">01</span>Launch a module. Pick any online game above — nothing to install, nothing to sign into.</li>
+          <li><span class="n">02</span>Log your run. When a score is worth keeping, give it a name on the spot.</li>
+          <li><span class="n">03</span>Chase the top spot. Each game keeps its own leaderboard — the hub just shows who's #1 in each.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div id="rankings">
+    <h2 class="section-title">rankings --best-per-game</h2>
+    <div class="win">
+      <div class="win-bar"><span class="dots"><span></span><span></span><span></span></span> ./rankings --preview</div>
+      <div class="win-body">
+
+        <div class="flags">
+          <button class="flag-btn active" data-target="pane-overview">--overview</button>
+          <button class="flag-btn" data-target="pane-cosmic">--game=cosmic-invaders</button>
+          <button class="flag-btn" disabled>--game=module-02 (locked)</button>
+          <button class="flag-btn" disabled>--game=module-03 (locked)</button>
+        </div>
+
+        <div class="board-pane active listing" id="pane-overview">
+          <div class="row clickable" data-open="pane-cosmic">
+            <div>
+              <div class="path">cosmic-invaders <span class="flag">[top run]</span></div>
+              <div class="desc">ACE — wave 14, 48,200 pts</div>
+            </div>
+            <span class="tag online">#1</span>
+          </div>
+          <div class="row">
+            <div>
+              <div class="path">module-02 <span class="flag">[top run]</span></div>
+              <div class="desc">No runs yet — be the first once it's live.</div>
+            </div>
+            <span class="tag locked">—</span>
+          </div>
+          <div class="row">
+            <div>
+              <div class="path">module-03 <span class="flag">[top run]</span></div>
+              <div class="desc">No runs yet — be the first once it's live.</div>
+            </div>
+            <span class="tag locked">—</span>
+          </div>
+          <p class="comment" style="margin-top:14px;">// click a game, or use the flags above, to open its full board</p>
+        </div>
+
+        <div class="board-pane" id="pane-cosmic">
+<pre class="table">RANK  NAME   WAVE   SCORE
+<span class="hi">01    ACE    14     48,200</span>
+02    MVP    12     39,650
+03    ZAP    10     31,010
+04    RGX    09     27,400
+05    LUX    08     22,150</pre>
+          <p class="comment" style="margin-top:14px;">// full cosmic-invaders board — real scores appear here once it's wired in</p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <span><span class="prompt">echo "built by nuhad"</span></span>
+  <span>NO SIGN-UP REQUIRED</span>
+</footer>
+
+<script>
+  function openPane(target){
+    document.querySelectorAll('.flag-btn').forEach(b => b.classList.toggle('active', b.dataset.target === target));
+    document.querySelectorAll('.board-pane').forEach(p => p.classList.toggle('active', p.id === target));
+  }
+  document.querySelectorAll('.flag-btn[data-target]').forEach(btn => {
+    btn.addEventListener('click', () => openPane(btn.dataset.target));
+  });
+  document.querySelectorAll('[data-open]').forEach(el => {
+    el.addEventListener('click', () => openPane(el.dataset.open));
+  });
+</script>
 </body>
 </html>

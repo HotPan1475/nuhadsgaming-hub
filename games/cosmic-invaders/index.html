@@ -87,6 +87,101 @@
         }
         #muteBtn:hover { background: rgba(181,55,242,0.3); }
 
+        #gameOverPanel {
+            display: none;
+            background: #ffcc00;
+            color: #14100a;
+            padding: 32px 36px;
+            border-radius: 16px;
+            box-shadow: 0 0 70px rgba(255, 204, 0, 0.55);
+            max-width: 420px;
+            width: 88vw;
+            text-align: center;
+            pointer-events: auto;
+        }
+        #gameOverPanel h2 {
+            font-size: 1.5rem;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 14px;
+        }
+        #gameOverStats {
+            font-size: 0.85rem;
+            line-height: 1.8;
+            letter-spacing: 1px;
+            margin-bottom: 18px;
+        }
+        #scoreNameInput {
+            width: 100%;
+            padding: 10px 12px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            border: 2px solid #14100a;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            box-sizing: border-box;
+            background: #fffdf5;
+            color: #14100a;
+        }
+        #gameOverPanel button {
+            font-family: inherit;
+            font-size: 0.8rem;
+            font-weight: bold;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 4px;
+        }
+        #submitScoreBtn {
+            background: #14100a;
+            color: #ffcc00;
+            border: 2px solid #14100a;
+        }
+        #submitScoreBtn:disabled { opacity: 0.6; cursor: default; }
+        #playAgainBtn {
+            background: transparent;
+            border: 2px solid #14100a;
+            color: #14100a;
+        }
+        #scoreStatusMsg {
+            font-size: 0.7rem;
+            font-style: italic;
+            min-height: 14px;
+            margin-top: 2px;
+        }
+        #leaderboardBox {
+            margin-top: 16px;
+            text-align: left;
+            font-size: 0.75rem;
+        }
+        #leaderboardBox .lb-title {
+            display: block;
+            margin-bottom: 6px;
+            letter-spacing: 1px;
+            font-weight: bold;
+        }
+        #leaderboardList {
+            list-style: decimal;
+            padding-left: 22px;
+            margin: 0;
+            max-height: 170px;
+            overflow-y: auto;
+        }
+        #leaderboardList li {
+            padding: 3px 0;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            border-bottom: 1px solid rgba(20,16,10,0.15);
+        }
+        #leaderboardList li span:first-child {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
     </style>
 </head>
 <body>
@@ -94,6 +189,20 @@
 <canvas id="gameCanvas"></canvas>
 <div class="ui-layer">
     <div id="screenText">COSMIC INVADERS<span class="sub-text">Hold Space, Mouse Click, or Touch Screen to Shoot Continuously<br>Glide with Your Mouse / Finger or Use A/D / Arrows to Move</span></div>
+    <div id="gameOverPanel">
+        <h2>Mission Terminated</h2>
+        <div id="gameOverStats"></div>
+        <input type="text" id="scoreNameInput" maxlength="20" placeholder="Enter your name" autocomplete="off">
+        <div id="scoreStatusMsg"></div>
+        <div>
+            <button id="submitScoreBtn">Submit Score</button>
+            <button id="playAgainBtn">Play Again</button>
+        </div>
+        <div id="leaderboardBox">
+            <span class="lb-title">TOP SCORES</span>
+            <ol id="leaderboardList"><li><span>Loading…</span><span></span></li></ol>
+        </div>
+    </div>
 </div>
 <button id="muteBtn" aria-label="Toggle sound">🔊</button>
 
@@ -101,6 +210,61 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const screenText = document.getElementById('screenText');
+
+// ---------------- LEADERBOARD (Supabase) ----------------
+const SUPABASE_URL = 'https://jxmlzzqrupedrannluos.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_brjw3X5HIu5utGhijlg9pw_dNMOnqoJ';
+const GAME_ID = 'cosmic-invaders';
+
+async function submitScore(name, scoreVal, waveVal) {
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/scores`, {
+            method: 'POST',
+            headers: {
+                'apikey': SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ game_id: GAME_ID, player_name: name, score: scoreVal, wave_reached: waveVal })
+        });
+        return res.ok;
+    } catch (e) {
+        return false;
+    }
+}
+
+async function fetchLeaderboard() {
+    try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/scores?game_id=eq.${GAME_ID}&select=player_name,score,wave_reached&order=score.desc&limit=10`, {
+            headers: {
+                'apikey': SUPABASE_KEY,
+                'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+        });
+        if (!res.ok) return [];
+        return await res.json();
+    } catch (e) {
+        return [];
+    }
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function renderLeaderboard(rows) {
+    const list = document.getElementById('leaderboardList');
+    if (!rows || rows.length === 0) {
+        list.innerHTML = '<li><span>No scores yet</span><span>Be the first!</span></li>';
+        return;
+    }
+    list.innerHTML = rows.map(r =>
+        `<li><span>${escapeHtml(r.player_name)}</span><span>${r.score} (w${r.wave_reached ?? '?'})</span></li>`
+    ).join('');
+}
 
 const GAME_WIDTH = 800;
 const GAME_HEIGHT = 600;
@@ -1290,8 +1454,17 @@ function triggerGameOver() {
         highScore = score;
         localStorage.setItem('cosmic_chicken_invaders_high_score', highScore);
     }
-    screenText.style.display = 'block';
-    screenText.innerHTML = `MISSION TERMINATED<span class="sub-text">Final Score: ${score}<br>Record High: ${highScore}<br>Wave Reached: ${wave}</span><span class="sub-hint">Click to Deploy Again</span>`;
+    screenText.style.display = 'none';
+    document.getElementById('gameOverStats').innerHTML = `Final Score: ${score}<br>Record High: ${highScore}<br>Wave Reached: ${wave}`;
+    const nameInput = document.getElementById('scoreNameInput');
+    nameInput.value = localStorage.getItem('cosmic_invaders_player_name') || '';
+    document.getElementById('scoreStatusMsg').textContent = '';
+    const submitBtn = document.getElementById('submitScoreBtn');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Submit Score';
+    document.getElementById('leaderboardList').innerHTML = '<li><span>Loading…</span><span></span></li>';
+    document.getElementById('gameOverPanel').style.display = 'block';
+    fetchLeaderboard().then(renderLeaderboard);
 }
 
 function advanceToNextWave() {
@@ -1313,6 +1486,7 @@ function fireLaser() {
 
 window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
     if (gameState !== STATE_PLAYING && (e.code === 'Space' || e.code === 'Enter')) handleUIPress();
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -1346,10 +1520,47 @@ screenText.addEventListener('click', (e) => {
     handleUIPress();
 });
 
+document.getElementById('playAgainBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    handleUIPress();
+});
+
+document.getElementById('submitScoreBtn').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const nameInput = document.getElementById('scoreNameInput');
+    const statusMsg = document.getElementById('scoreStatusMsg');
+    const btn = document.getElementById('submitScoreBtn');
+    const name = nameInput.value.trim().slice(0, 20);
+    if (!name) {
+        statusMsg.textContent = 'Enter a name first.';
+        return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+    statusMsg.textContent = '';
+    localStorage.setItem('cosmic_invaders_player_name', name);
+    const ok = await submitScore(name, score, wave);
+    if (ok) {
+        btn.textContent = 'Submitted!';
+        statusMsg.textContent = 'Score added to the leaderboard.';
+        const rows = await fetchLeaderboard();
+        renderLeaderboard(rows);
+    } else {
+        btn.disabled = false;
+        btn.textContent = 'Submit Score';
+        statusMsg.textContent = 'Could not submit — check your connection.';
+    }
+});
+
+document.getElementById('scoreNameInput').addEventListener('click', (e) => {
+    e.stopPropagation();
+});
+
 function handleUIPress() {
     if (gameState === STATE_START || gameState === STATE_GAMEOVER) {
         getAudioCtx();
         SFX.click();
+        document.getElementById('gameOverPanel').style.display = 'none';
         initGame();
         gameState = STATE_PLAYING;
         screenText.style.display = 'none';

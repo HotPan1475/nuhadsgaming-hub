@@ -74,16 +74,16 @@
   }
   h2.section-title::before{ content:"## "; color:var(--green-dim); }
 
-  .listing{ display:flex; flex-direction:column; }
-  .row{
-    display:flex; justify-content:space-between; align-items:center;
-    padding:12px 0; border-bottom:1px dashed var(--line);
-    gap:14px; flex-wrap:wrap;
-  }
-  .row:last-child{ border-bottom:none; }
+  .listing{ display:grid; grid-template-columns: 1fr auto; align-items:center; column-gap:14px; }
+  .row{ display:contents; }
+  .row::after{ content:''; grid-column: 1 / -1; border-bottom:1px dashed var(--line); }
+  .row:last-child::after{ border-bottom:none; }
+  .row > div:first-child{ padding:12px 0; }
   .row .path{ color:var(--ink); }
   .row .path .flag{ color:var(--green-dim); }
-  .row .desc{ color:var(--green-dim); font-size:0.82rem; flex:1; min-width:200px; }
+  .row .desc{ color:var(--green-dim); font-size:0.82rem; }
+  .row-actions{ display:flex; align-items:center; gap:10px; padding:12px 0; justify-self:end; }
+  .row > .tag{ padding:12px 0; justify-self:end; }
   .tag{
     font-size:0.72rem; padding:3px 8px; border:1px solid var(--line);
   }
@@ -159,24 +159,40 @@
             <div class="path">./cosmic-invaders.sh <span class="flag">[rwx]</span></div>
             <div class="desc">Endless waves, a boss every third round, four squad types before things speed up.</div>
           </div>
-          <span class="tag online">ONLINE</span>
-          <a class="run" href="./games/cosmic-invaders/">RUN</a>
+          <div class="row-actions">
+            <span class="tag online">ONLINE</span>
+            <a class="run" href="./games/cosmic-invaders/">RUN</a>
+          </div>
         </div>
         <div class="row">
           <div>
             <div class="path">./snake-protocol.sh <span class="flag">[rwx]</span></div>
             <div class="desc">Classic grid snake with a twist — a big node every 5th pickup, plus a 1P or 2P duel mode with a 2-minute clock.</div>
           </div>
-          <span class="tag online">ONLINE</span>
-          <a class="run" href="./games/snake-protocol/">RUN</a>
+          <div class="row-actions">
+            <span class="tag online">ONLINE</span>
+            <a class="run" href="./games/snake-protocol/">RUN</a>
+          </div>
         </div>
         <div class="row">
           <div>
-            <div class="path">./module-03.sh <span class="flag">[---]</span></div>
-            <div class="desc">Slot three is open. Check back to see what launches here next.</div>
+            <div class="path">./nova-strikers.sh <span class="flag">[rwx]</span></div>
+            <div class="desc">Zero-gravity arena soccer, 2P only — pick top-down or side-view, first to 10 or best score when the clock runs out.</div>
           </div>
-          <span class="tag locked">LOCKED</span>
-          <span class="run disabled">WAIT</span>
+          <div class="row-actions">
+            <span class="tag online">ONLINE</span>
+            <a class="run" href="./games/nova-strikers/">RUN</a>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="path">./module-04.sh <span class="flag">[---]</span></div>
+            <div class="desc">Slot four is open. Check back to see what launches here next.</div>
+          </div>
+          <div class="row-actions">
+            <span class="tag locked">LOCKED</span>
+            <span class="run disabled">WAIT</span>
+          </div>
         </div>
       </div>
     </div>
@@ -205,7 +221,8 @@
           <button class="flag-btn active" data-target="pane-overview">--overview</button>
           <button class="flag-btn" data-target="pane-cosmic">--game=cosmic-invaders</button>
           <button class="flag-btn" data-target="pane-snake">--game=snake-protocol</button>
-          <button class="flag-btn" disabled>--game=module-03 (locked)</button>
+          <button class="flag-btn" data-target="pane-nova">--game=nova-strikers</button>
+          <button class="flag-btn" disabled>--game=module-04 (locked)</button>
         </div>
 
         <div class="board-pane active listing" id="pane-overview">
@@ -223,9 +240,16 @@
             </div>
             <span class="tag online">#1</span>
           </div>
+          <div class="row clickable" data-open="pane-nova">
+            <div>
+              <div class="path">nova-strikers <span class="flag">[top run]</span></div>
+              <div class="desc" id="nova-top-desc">Loading…</div>
+            </div>
+            <span class="tag online">#1</span>
+          </div>
           <div class="row">
             <div>
-              <div class="path">module-03 <span class="flag">[top run]</span></div>
+              <div class="path">module-04 <span class="flag">[top run]</span></div>
               <div class="desc">No runs yet — be the first once it's live.</div>
             </div>
             <span class="tag locked">—</span>
@@ -253,6 +277,22 @@ Loading…</pre>
 Loading…</pre>
           </div>
           <p class="comment" style="margin-top:14px;">// live snake-protocol board, top 5 by score — solo and duel scores are tracked separately</p>
+        </div>
+
+        <div class="board-pane" id="pane-nova">
+          <div class="flags">
+            <button class="flag-btn active" data-mode-target="pane-nova-topdown">--style=top-down</button>
+            <button class="flag-btn" data-mode-target="pane-nova-sideview">--style=side-view</button>
+          </div>
+          <div class="sub-pane active" id="pane-nova-topdown">
+<pre class="table" id="nova-topdown-table">RANK  NAME   SCORE
+Loading…</pre>
+          </div>
+          <div class="sub-pane" id="pane-nova-sideview">
+<pre class="table" id="nova-sideview-table">RANK  NAME   SCORE
+Loading…</pre>
+          </div>
+          <p class="comment" style="margin-top:14px;">// live nova-strikers board, top 5 by score — 2-player duel only, tracked per camera style</p>
         </div>
 
       </div>
@@ -286,6 +326,17 @@ Loading…</pre>
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       openSnakeMode(btn.dataset.modeTarget);
+    });
+  });
+
+  function openNovaMode(target){
+    document.querySelectorAll('#pane-nova .flag-btn[data-mode-target]').forEach(b => b.classList.toggle('active', b.dataset.modeTarget === target));
+    document.querySelectorAll('#pane-nova .sub-pane').forEach(p => p.classList.toggle('active', p.id === target));
+  }
+  document.querySelectorAll('#pane-nova .flag-btn[data-mode-target]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openNovaMode(btn.dataset.modeTarget);
     });
   });
 
@@ -334,11 +385,11 @@ Loading…</pre>
     }
   }
 
-  async function loadSnakeTable(mode, tableElId) {
+  async function loadScoreTable(gameId, mode, tableElId) {
     const tableEl = document.getElementById(tableElId);
     try {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/scores?game_id=eq.snake-protocol&mode=eq.${mode}&select=player_name,score&order=score.desc&limit=5`,
+        `${SUPABASE_URL}/rest/v1/scores?game_id=eq.${gameId}&mode=eq.${mode}&select=player_name,score&order=score.desc&limit=5`,
         { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }
       );
       if (!res.ok) throw new Error('bad response');
@@ -365,8 +416,8 @@ Loading…</pre>
   async function loadSnakeLeaderboard() {
     const descEl = document.getElementById('snake-top-desc');
     const [soloRows, duelRows] = await Promise.all([
-      loadSnakeTable('single', 'snake-solo-table'),
-      loadSnakeTable('two-player', 'snake-duel-table')
+      loadScoreTable('snake-protocol', 'single', 'snake-solo-table'),
+      loadScoreTable('snake-protocol', 'two-player', 'snake-duel-table')
     ]);
 
     const soloTop = soloRows[0];
@@ -383,8 +434,30 @@ Loading…</pre>
     }
   }
 
+  async function loadNovaLeaderboard() {
+    const descEl = document.getElementById('nova-top-desc');
+    const [topdownRows, sideviewRows] = await Promise.all([
+      loadScoreTable('nova-strikers', 'topdown-duel', 'nova-topdown-table'),
+      loadScoreTable('nova-strikers', 'sideview-duel', 'nova-sideview-table')
+    ]);
+
+    const topdownTop = topdownRows[0];
+    const sideviewTop = sideviewRows[0];
+    let best = null;
+    let bestStyle = '';
+    if (topdownTop && (!sideviewTop || topdownTop.score >= sideviewTop.score)) { best = topdownTop; bestStyle = 'top-down'; }
+    else if (sideviewTop) { best = sideviewTop; bestStyle = 'side-view'; }
+
+    if (!best) {
+      descEl.textContent = "No runs yet — be the first.";
+    } else {
+      descEl.textContent = `${best.player_name} — ${bestStyle}, ${best.score.toLocaleString()} pts`;
+    }
+  }
+
   loadCosmicLeaderboard();
   loadSnakeLeaderboard();
+  loadNovaLeaderboard();
 </script>
 </body>
 </html>

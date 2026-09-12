@@ -1,0 +1,1605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Invaders</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body, html {
+            background: #020208;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #screenText {
+            font-size: 2rem;
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            color: #14100a;
+            background: #ffcc00;
+            padding: 40px 60px;
+            border: none;
+            border-radius: 16px;
+            cursor: pointer;
+            pointer-events: auto;
+            transition: all 0.2s ease;
+            box-shadow: 0 0 70px rgba(255, 204, 0, 0.55);
+            max-width: 900px;
+        }
+        #screenText:hover {
+            box-shadow: 0 0 90px rgba(255, 204, 0, 0.8);
+            transform: scale(1.01);
+        }
+        .sub-text {
+            font-size: 0.78rem;
+            display: block;
+            margin-top: 16px;
+            color: #fffdf5;
+            text-shadow: none;
+            line-height: 1.9;
+            letter-spacing: 2px;
+        }
+        .sub-hint {
+            font-size: 0.72rem;
+            display: block;
+            margin-top: 18px;
+            color: #fffdf5;
+            font-style: italic;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+        }
+
+        #muteBtn {
+            position: fixed; top: 14px; right: 14px; z-index: 60;
+            background: rgba(20,16,36,0.7); border: 1px solid rgba(255,255,255,0.3); color: #fff;
+            border-radius: 50%; width: 38px; height: 38px; font-size: 17px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #muteBtn:hover { background: rgba(181,55,242,0.3); }
+
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+<div class="ui-layer">
+    <div id="screenText">COSMIC INVADERS<span class="sub-text">Hold Space, Mouse Click, or Touch Screen to Shoot Continuously<br>Glide with Your Mouse / Finger or Use A/D / Arrows to Move</span></div>
+</div>
+<button id="muteBtn" aria-label="Toggle sound">🔊</button>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const screenText = document.getElementById('screenText');
+
+const GAME_WIDTH = 800;
+const GAME_HEIGHT = 600;
+
+let scale = 1;
+let offsetX = 0;
+let offsetY = 0;
+
+const STATE_START = 0;
+const STATE_PLAYING = 1;
+const STATE_GAMEOVER = 2;
+let gameState = STATE_START;
+
+// Endless mode: a boss appears every 3 waves, cycling through 4 boss
+// types. Every full lap through the rotation, bosses get tougher.
+const WAVES_PER_SECTOR = 3;
+const BOSS_TYPES = ['sarge', 'marksman', 'broodmother', 'vanguard'];
+const CHICKEN_TYPES = ['recruit', 'trooper', 'jetpack', 'shielded'];
+
+function getSector(wave) {
+    return Math.floor((wave - 1) / WAVES_PER_SECTOR) % BOSS_TYPES.length;
+}
+function isBossWave(wave) {
+    return wave % WAVES_PER_SECTOR === 0;
+}
+function getBossLap(wave) {
+    let bossNumber = wave / WAVES_PER_SECTOR;
+    return Math.floor((bossNumber - 1) / BOSS_TYPES.length) + 1;
+}
+
+// Difficulty curve: gentle through wave 10 so players see every chicken
+// type and the first three bosses, then ramps up harder after that.
+function getSwarmSpeedMultiplier(wave) {
+    if (wave <= 10) return 1.0 + wave * 0.045;
+    return Math.min(4.5, 1.45 + (wave - 10) * 0.15);
+}
+function getEggDropProbability(wave) {
+    let p = wave <= 10 ? 0.006 + wave * 0.0018 : 0.024 + (wave - 10) * 0.006;
+    return Math.min(0.11, p);
+}
+function getTotalUnits(wave) {
+    if (wave < 5) return Math.min(14, 9 + wave * 2);
+    return Math.min(50, 14 + (wave - 4) * 2);
+}
+function getBossMaxHp(lap) {
+    return 150 + Math.min(lap, 6) * 180;
+}
+function getBossSpeed(lap) {
+    return 2.0 + Math.min(lap, 6) * 0.3;
+}
+
+// ---------------- SOUND ENGINE (synthesized, no external files) ----------------
+let audioCtx = null;
+let soundEnabled = true;
+
+function getAudioCtx() {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+}
+
+function playTone({ freq = 440, freqEnd = null, duration = 0.12, type = 'square', gain = 0.12, delay = 0 }) {
+    if (!soundEnabled) return;
+    try {
+        const ctx = getAudioCtx();
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = type;
+        const t0 = ctx.currentTime + delay;
+        osc.frequency.setValueAtTime(freq, t0);
+        if (freqEnd !== null) osc.frequency.exponentialRampToValueAtTime(Math.max(20, freqEnd), t0 + duration);
+        g.gain.setValueAtTime(gain, t0);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        osc.connect(g);
+        g.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + duration + 0.03);
+    } catch (e) { /* audio not available, fail silently */ }
+}
+
+function playNoise({ duration = 0.2, gain = 0.2, filterFreq = 1000, filterType = 'lowpass', delay = 0 }) {
+    if (!soundEnabled) return;
+    try {
+        const ctx = getAudioCtx();
+        const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * duration));
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = ctx.createBiquadFilter();
+        filter.type = filterType;
+        filter.frequency.value = filterFreq;
+        const g = ctx.createGain();
+        const t0 = ctx.currentTime + delay;
+        g.gain.setValueAtTime(gain, t0);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        noise.connect(filter);
+        filter.connect(g);
+        g.connect(ctx.destination);
+        noise.start(t0);
+        noise.stop(t0 + duration + 0.03);
+    } catch (e) { /* audio not available, fail silently */ }
+}
+
+const SFX = {
+    shoot() { playTone({ freq: 800, freqEnd: 200, duration: 0.09, type: 'sawtooth', gain: 0.06 }); },
+    chickenPop() {
+        playNoise({ duration: 0.045, gain: 0.15, filterFreq: 3200, filterType: 'highpass' });
+        playTone({ freq: 520, freqEnd: 340, duration: 0.06, type: 'square', gain: 0.17 });
+        playTone({ freq: 680, freqEnd: 780, duration: 0.08, type: 'square', gain: 0.15, delay: 0.055 });
+    },
+    eggDrop() { playTone({ freq: 420, freqEnd: 260, duration: 0.05, type: 'sine', gain: 0.025 }); },
+    eggHit() {
+        playNoise({ duration: 0.25, gain: 0.2, filterFreq: 600, filterType: 'lowpass' });
+        playTone({ freq: 150, freqEnd: 50, duration: 0.2, type: 'sine', gain: 0.1 });
+    },
+    asteroidHit() { playNoise({ duration: 0.1, gain: 0.12, filterFreq: 1500, filterType: 'bandpass' }); },
+    bossHit() {
+        playTone({ freq: 220, freqEnd: 110, duration: 0.08, type: 'square', gain: 0.09 });
+        playNoise({ duration: 0.08, gain: 0.09, filterFreq: 1800, filterType: 'bandpass' });
+    },
+    bossExplode() {
+        playNoise({ duration: 0.9, gain: 0.28, filterFreq: 400, filterType: 'lowpass' });
+        playTone({ freq: 110, freqEnd: 25, duration: 0.75, type: 'sawtooth', gain: 0.16 });
+    },
+    click() { playTone({ freq: 600, duration: 0.05, type: 'square', gain: 0.07 }); },
+    victoryFanfare() {
+        [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => playTone({ freq: f, duration: 0.3, type: 'triangle', gain: 0.11, delay: i * 0.17 }));
+    }
+};
+
+// ---------------- BACKGROUND MUSIC (looping step-sequencer, synthesized) ----------------
+let musicTimer = null;
+let musicStep = 0;
+
+// Two-bar riff (32 steps) in A minor with a call-and-response lead line
+// instead of one short repeating loop, plus a hi-hat layer for drive.
+const gameBassPattern = [
+    110, 0, 110, 164.81, 110, 0, 110, 164.81, 98, 0, 98, 146.83, 110, 0, 110, 164.81,
+    87.31, 0, 87.31, 130.81, 98, 0, 98, 146.83, 110, 0, 164.81, 0, 110, 0, 0, 0
+];
+const gameLeadPattern = [
+    0, 0, 220, 0, 261.63, 0, 293.66, 0, 329.63, 0, 392.00, 0, 329.63, 293.66, 261.63, 0,
+    0, 0, 293.66, 0, 261.63, 0, 220, 0, 196.00, 0, 220, 0, 261.63, 0, 0, 0
+];
+
+function playMusicNote(freq, duration, type, gain, delay = 0) {
+    if (!soundEnabled || !freq) return;
+    try {
+        const ctx = getAudioCtx();
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = type;
+        const t0 = ctx.currentTime + delay;
+        osc.frequency.setValueAtTime(freq, t0);
+        g.gain.setValueAtTime(0, t0);
+        g.gain.linearRampToValueAtTime(gain, t0 + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+        osc.connect(g);
+        g.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + duration + 0.03);
+    } catch (e) { /* audio not available, fail silently */ }
+}
+
+function playHat(accent) {
+    playNoise({ duration: 0.025, gain: accent ? 0.05 : 0.025, filterFreq: 7000, filterType: 'highpass' });
+}
+
+function startMusicLoop(bassPattern, leadPattern, stepMs, bassType, leadType, bassGain, leadGain) {
+    stopMusicLoop();
+    musicStep = 0;
+    musicTimer = setInterval(() => {
+        const bf = bassPattern[musicStep % bassPattern.length];
+        const lf = leadPattern[musicStep % leadPattern.length];
+        if (bf) playMusicNote(bf, (stepMs / 1000) * 1.7, bassType, bassGain);
+        if (lf) playMusicNote(lf, (stepMs / 1000) * 0.85, leadType, leadGain);
+        playHat(musicStep % 4 === 0);
+        musicStep++;
+    }, stepMs);
+}
+
+function stopMusicLoop() {
+    if (musicTimer) { clearInterval(musicTimer); musicTimer = null; }
+}
+
+function playKick() {
+    playTone({ freq: 95, freqEnd: 40, duration: 0.14, type: 'sine', gain: 0.17 });
+}
+
+function startGameMusic() { startMusicLoop(gameBassPattern, gameLeadPattern, 150, 'square', 'triangle', 0.045, 0.05); }
+
+// Boss theme: lower, dissonant, driving — sawtooth grit, a tritone jab in
+// the bass, a stabbing lead motif, and a kick drum for weight.
+const bossBassPattern = [73.42, 73.42, 0, 73.42, 73.42, 73.42, 0, 116.54, 73.42, 73.42, 0, 73.42, 73.42, 110, 0, 0];
+const bossLeadPattern = [0, 293.66, 0, 0, 311.13, 0, 293.66, 0, 0, 440, 0, 392.00, 0, 349.23, 0, 0];
+
+function startBossMusic() {
+    stopMusicLoop();
+    musicStep = 0;
+    let stepMs = 130;
+    musicTimer = setInterval(() => {
+        const bf = bossBassPattern[musicStep % bossBassPattern.length];
+        const lf = bossLeadPattern[musicStep % bossLeadPattern.length];
+        if (bf) playMusicNote(bf, (stepMs / 1000) * 1.5, 'sawtooth', 0.075);
+        if (lf) playMusicNote(lf, (stepMs / 1000) * 0.7, 'sawtooth', 0.065);
+        if (musicStep % 4 === 0) playKick();
+        playHat(musicStep % 2 === 0);
+        musicStep++;
+    }, stepMs);
+}
+
+let player;
+let keys = {};
+let isPointerShooting = false; 
+let lasers = [];
+let chickens = [];
+let bossAdds = [];
+let eggs = [];
+let asteroids = [];
+let particles = [];
+let stars = [];
+let activeBoss = null;
+let score = 0;
+let wave = 1;
+let shootCooldown = 0;
+let sectorFlashTimer = 0;
+let sectorFlashText = '';
+
+// Lives Configuration
+const MAX_LIVES = 3;
+let lives = MAX_LIVES;
+let invulnerabilityTimer = 0;
+
+let highScore = localStorage.getItem('cosmic_chicken_invaders_high_score') || 0;
+
+// One backdrop per sector (matches the boss/chicken-type rotation),
+// so the palette shifts once every 3 waves instead of flickering each wave.
+const spaceThemes = [
+    { start: '#09041a', end: '#020108', starColor: '#ffffff' },
+    { start: '#1a020d', end: '#080004', starColor: '#ffe6f2' },
+    { start: '#02160a', end: '#01060a', starColor: '#e6ffe6' },
+    { start: '#1a0602', end: '#080100', starColor: '#ffe6d9' }
+];
+
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    scale = Math.min(canvas.width / GAME_WIDTH, canvas.height / GAME_HEIGHT);
+    offsetX = (canvas.width - GAME_WIDTH * scale) / 2;
+    offsetY = (canvas.height - GAME_HEIGHT * scale) / 2;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+for(let i=0; i<80; i++) {
+    stars.push({
+        x: Math.random() * GAME_WIDTH,
+        y: Math.random() * GAME_HEIGHT,
+        size: Math.random() * 2.5 + 0.5,
+        speed: Math.random() * 1.5 + 0.3
+    });
+}
+
+class PlayerShip {
+    constructor() {
+        this.width = 46;
+        this.height = 50;
+        this.x = GAME_WIDTH / 2 - this.width / 2;
+        this.y = GAME_HEIGHT - 70;
+        this.speed = 9.0;
+    }
+
+    update(dt) {
+        if (keys['ArrowLeft'] || keys['KeyA']) this.x -= this.speed * dt;
+        if (keys['ArrowRight'] || keys['KeyD']) this.x += this.speed * dt;
+
+        if (this.x < 0) this.x = 0;
+        if (this.x > GAME_WIDTH - this.width) this.x = GAME_WIDTH - this.width;
+    }
+
+    draw() {
+        // Blinking graphic effect when invulnerable post-respawn
+        if (invulnerabilityTimer > 0) {
+            if (Math.floor(invulnerabilityTimer / 5) % 2 === 0) return;
+        }
+
+        ctx.save();
+        ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+        ctx.scale(this.width / 46, this.height / 50);
+
+        if (gameState === STATE_PLAYING) {
+            let flicker = 0.75 + Math.random() * 0.35;
+            ctx.fillStyle = '#60a5fa';
+            ctx.beginPath();
+            ctx.moveTo(-14, 18); ctx.lineTo(-11, 18 + 32 * flicker); ctx.lineTo(-8, 18);
+            ctx.closePath(); ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(8, 18); ctx.lineTo(11, 18 + 32 * flicker); ctx.lineTo(14, 18);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#e0f2fe';
+            ctx.beginPath();
+            ctx.moveTo(-13, 18); ctx.lineTo(-11, 18 + 20 * flicker); ctx.lineTo(-9, 18);
+            ctx.closePath(); ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(9, 18); ctx.lineTo(11, 18 + 20 * flicker); ctx.lineTo(13, 18);
+            ctx.closePath(); ctx.fill();
+        }
+
+        ctx.fillStyle = '#334155';
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(-22, 4, 16, 20, 4) : ctx.rect(-22, 4, 16, 20);
+        ctx.fill(); ctx.stroke();
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(6, 4, 16, 20, 4) : ctx.rect(6, 4, 16, 20);
+        ctx.fill(); ctx.stroke();
+
+        ctx.fillStyle = '#475569';
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-12, -6);
+        ctx.lineTo(-52, 14);
+        ctx.lineTo(-32, 30);
+        ctx.lineTo(-12, 14);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(12, -6);
+        ctx.lineTo(52, 14);
+        ctx.lineTo(32, 30);
+        ctx.lineTo(12, 14);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+
+        ctx.fillStyle = '#f97316';
+        ctx.fillRect(-48, 12, 9, 3);
+        ctx.fillRect(39, 12, 9, 3);
+
+        ctx.fillStyle = '#64748b';
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, -25);
+        ctx.lineTo(9, -13);
+        ctx.lineTo(18, -3);
+        ctx.lineTo(9, 6);
+        ctx.lineTo(0, 15);
+        ctx.lineTo(-9, 6);
+        ctx.lineTo(-18, -3);
+        ctx.lineTo(-9, -13);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.beginPath();
+        ctx.moveTo(0, -25);
+        ctx.lineTo(5, -14);
+        ctx.lineTo(0, -3);
+        ctx.lineTo(-5, -14);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#22d3ee';
+        ctx.globalAlpha = 0.3;
+        ctx.beginPath();
+        ctx.arc(0, -8, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = '#7dd3fc';
+        ctx.strokeStyle = '#0ea5e9';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.ellipse(0, -8, 4.5, 7, 0, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+
+        ctx.restore();
+    }
+}
+
+// Shared chicken silhouette pieces, reused by regular troops, boss adds,
+// and the chicken-pilot heads on every boss.
+function drawChickenHead(r) {
+    let k = r / 12;
+    ctx.fillStyle = '#f8fafc';
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = '#ff1a1a';
+    ctx.beginPath();
+    ctx.arc(-4 * k, -12 * k, 4 * k, 0, Math.PI * 2);
+    ctx.arc(2 * k, -14 * k, 5 * k, 0, Math.PI * 2);
+    ctx.arc(7 * k, -10 * k, 3.5 * k, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#ff9900';
+    ctx.beginPath();
+    ctx.moveTo(-4 * k, 3 * k);
+    ctx.lineTo(4 * k, 3 * k);
+    ctx.lineTo(0, 9 * k);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#000000';
+    ctx.beginPath();
+    ctx.arc(-3.5 * k, -1 * k, 1.6 * k, 0, Math.PI * 2);
+    ctx.arc(3.5 * k, -1 * k, 1.6 * k, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function drawWingPair(cx, cy, ellipseCx, ellipseCy, rx, ry, tilt, wingSwing) {
+    [-1, 1].forEach(side => {
+        ctx.save();
+        ctx.translate(side * cx, cy);
+        ctx.rotate(side * wingSwing);
+        ctx.fillStyle = '#e6f2ff';
+        ctx.strokeStyle = '#b3d1ff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(side * ellipseCx, ellipseCy, rx, ry, side * tilt, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+    });
+}
+
+class ChickenInvader {
+    constructor(startX, startY, targetX, targetY, delay, chickenType) {
+        this.startX = startX;
+        this.startY = startY;
+        this.x = startX;
+        this.y = startY;
+        this.targetX = targetX;
+        this.targetY = targetY;
+        this.width = 46;
+        this.height = 44;
+        this.animTimer = Math.random() * 100;
+        this.type = chickenType || 'recruit';
+        this.hp = this.type === 'shielded' ? 2 : 1;
+        this.arriving = true;
+        this.arriveTimer = 0;
+        this.arriveDelay = delay || 0;
+        this.arriveDuration = 55;
+    }
+
+    updateArrival(dt) {
+        this.arriveTimer += dt;
+        let t = Math.max(0, Math.min(1, (this.arriveTimer - this.arriveDelay) / this.arriveDuration));
+        let eased = 1 - Math.pow(1 - t, 3);
+        let liveTargetY = this.targetY + swarmDescentOffset;
+        this.x = this.startX + (this.targetX - this.startX) * eased;
+        this.y = this.startY + (liveTargetY - this.startY) * eased;
+        this.animTimer += 0.22 * dt;
+        if (t >= 1) {
+            this.arriving = false;
+            this.x = this.targetX;
+            this.y = liveTargetY;
+        }
+    }
+
+    update(direction, speedY, dt) {
+        this.x += direction;
+        this.y += speedY;
+        this.animTimer += 0.22 * dt;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+
+        let wingSwing = Math.sin(this.animTimer) * 0.35;
+
+        if (this.type === 'jetpack') {
+            let flicker = 0.7 + Math.random() * 0.4;
+            ctx.fillStyle = '#f97316';
+            ctx.beginPath();
+            ctx.moveTo(-14, 24); ctx.lineTo(-11, 24 + 18 * flicker); ctx.lineTo(-8, 24);
+            ctx.closePath(); ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(8, 24); ctx.lineTo(11, 24 + 18 * flicker); ctx.lineTo(14, 24);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#fbbf24';
+            ctx.beginPath();
+            ctx.moveTo(-13, 24); ctx.lineTo(-11, 24 + 10 * flicker); ctx.lineTo(-9, 24);
+            ctx.closePath(); ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(9, 24); ctx.lineTo(11, 24 + 10 * flicker); ctx.lineTo(13, 24);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#3f3f46';
+            ctx.fillRect(-16, 4, 10, 20);
+            ctx.fillRect(6, 4, 10, 20);
+        }
+
+        drawWingPair(13, 2, 10, -2, 14, 7, Math.PI / 6, wingSwing);
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.beginPath();
+        ctx.moveTo(-8, 26); ctx.lineTo(0, 42); ctx.lineTo(-14, 36);
+        ctx.closePath(); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(8, 26); ctx.lineTo(0, 42); ctx.lineTo(14, 36);
+        ctx.closePath(); ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(0, 5, 17, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+
+        if (this.type === 'recruit') {
+            ctx.fillStyle = '#6b7d4f';
+            ctx.strokeStyle = '#4b5c38';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.rect(-13, -3, 26, 21);
+            ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#4b5c38';
+            ctx.fillRect(-9, 2, 7, 7);
+            ctx.fillRect(2, 2, 7, 7);
+        }
+
+        if (this.type === 'jetpack') {
+            ctx.strokeStyle = '#52525b';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(-8, -3); ctx.lineTo(8, 15); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(8, -3); ctx.lineTo(-8, 15); ctx.stroke();
+        }
+
+        if (this.type === 'shielded') {
+            ctx.strokeStyle = '#22d3ee';
+            ctx.globalAlpha = 0.5 + Math.sin(this.animTimer * 1.3) * 0.15;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(0, 8, 30, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+        }
+
+        drawChickenHead(12);
+
+        if (this.type === 'trooper') {
+            ctx.fillStyle = '#1f2937';
+            ctx.beginPath();
+            ctx.arc(-6, -13, 5, 0, Math.PI * 2);
+            ctx.arc(6, -13, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.fillRect(-11, -17, 22, 2);
+            ctx.fillStyle = '#3b82f6';
+            ctx.fillRect(-2, -31, 4, 9);
+            ctx.fillStyle = '#93c5fd';
+            ctx.beginPath();
+            ctx.arc(0, -33, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.save();
+            ctx.translate(16, -8);
+            ctx.rotate(-0.3);
+            ctx.fillStyle = '#52525b';
+            ctx.fillRect(0, -3, 36, 6);
+            ctx.fillStyle = '#0ea5e9';
+            ctx.beginPath();
+            ctx.arc(38, 0, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        ctx.restore();
+    }
+}
+
+const BOSS_CONFIG = {
+    sarge: { primary: '#ef4444', metal: '#52525b', core: '#fef08a', name: 'Sarge' },
+    marksman: { primary: '#a855f7', metal: '#6d28d9', core: '#67e8f9', name: 'Marksman' },
+    broodmother: { primary: '#22c55e', metal: '#16a34a', core: '#fde047', name: 'Broodmother' },
+    vanguard: { primary: '#ef4444', metal: '#1f2937', core: '#fef08a', name: 'Elite Vanguard' }
+};
+
+class TechChickenBoss {
+    constructor(lap, bossType) {
+        this.lap = lap;
+        this.bossType = bossType;
+        this.config = BOSS_CONFIG[bossType];
+        this.width = 150;
+        this.height = 130;
+        this.x = GAME_WIDTH / 2 - this.width / 2;
+        this.y = -160;
+        this.targetY = 70;
+        this.maxHp = getBossMaxHp(lap);
+        this.hp = this.maxHp;
+        this.speed = getBossSpeed(lap);
+        this.direction = 1;
+        this.animTimer = 0;
+        this.attackTimer = 0;
+        this.burstShotsRemaining = 0;
+        this.burstTimer = 0;
+        this.chargeState = 'idle';
+        this.chargeTimer = 0;
+        this.chargeTargetX = this.x;
+    }
+
+    update(dt) {
+        if (this.y < this.targetY) {
+            this.y += 2.5 * dt;
+            return;
+        }
+
+        this.animTimer += 0.08 * dt;
+
+        if (this.bossType === 'vanguard') {
+            this.updateVanguard(dt);
+        } else {
+            this.x += this.direction * this.speed * dt;
+            if (this.x <= 20 || this.x >= GAME_WIDTH - this.width - 20) {
+                this.direction *= -1;
+                this.x += this.direction * this.speed * dt;
+            }
+        }
+
+        this.attackTimer += dt;
+        let attackInterval = Math.max(25, 60 - this.lap * 4);
+
+        if (this.bossType === 'sarge') {
+            if (this.attackTimer >= attackInterval) {
+                this.attackTimer = 0;
+                eggs.push(new Projectile(this.x + this.width / 2, this.y + this.height - 10, 4.2 + this.lap * 0.3, 'egg'));
+                eggs.push(new Projectile(this.x + 30, this.y + this.height - 30, 4.0, 'egg'));
+                eggs.push(new Projectile(this.x + this.width - 30, this.y + this.height - 30, 4.0, 'egg'));
+                SFX.eggDrop();
+            }
+        } else if (this.bossType === 'marksman') {
+            if (this.burstShotsRemaining > 0) {
+                this.burstTimer -= dt;
+                if (this.burstTimer <= 0) {
+                    let offsets = [-40, 0, 40];
+                    let idx = 3 - this.burstShotsRemaining;
+                    lasers.push(new Projectile(this.x + this.width / 2 + offsets[idx], this.y + this.height - 15, 6.5, 'boss-laser'));
+                    this.burstShotsRemaining--;
+                    this.burstTimer = 9;
+                    SFX.eggDrop();
+                }
+            } else if (this.attackTimer >= attackInterval) {
+                this.attackTimer = 0;
+                this.burstShotsRemaining = 3;
+                this.burstTimer = 0;
+            }
+        } else if (this.bossType === 'broodmother') {
+            if (this.attackTimer >= attackInterval) {
+                this.attackTimer = 0;
+                for (let i = 0; i < 2; i++) {
+                    let sx = this.x + this.width / 2 + (i === 0 ? -25 : 25);
+                    let add = new ChickenInvader(sx, this.y + this.height - 10, sx, this.y + this.height - 10, 0, 'recruit');
+                    add.arriving = false;
+                    add.isAdd = true;
+                    add.vy = 1.6 + wave * 0.05;
+                    bossAdds.push(add);
+                }
+                SFX.eggDrop();
+            }
+        } else if (this.bossType === 'vanguard') {
+            if (this.chargeState === 'idle' && this.attackTimer >= attackInterval) {
+                this.attackTimer = 0;
+                lasers.push(new Projectile(this.x + 40, this.y + this.height - 20, 5.5, 'boss-laser'));
+                lasers.push(new Projectile(this.x + this.width - 40, this.y + this.height - 20, 5.5, 'boss-laser'));
+                SFX.eggDrop();
+            }
+        }
+    }
+
+    updateVanguard(dt) {
+        if (this.chargeState === 'idle') {
+            this.x += this.direction * this.speed * dt;
+            if (this.x <= 20 || this.x >= GAME_WIDTH - this.width - 20) {
+                this.direction *= -1;
+                this.x += this.direction * this.speed * dt;
+            }
+            this.chargeTimer += dt;
+            if (this.chargeTimer > 140) {
+                this.chargeState = 'telegraph';
+                this.chargeTimer = 0;
+                this.chargeTargetX = Math.max(20, Math.min(GAME_WIDTH - this.width - 20, player.x - this.width / 2));
+            }
+        } else if (this.chargeState === 'telegraph') {
+            this.chargeTimer += dt;
+            if (this.chargeTimer > 35) {
+                this.chargeState = 'charging';
+                this.chargeTimer = 0;
+            }
+        } else if (this.chargeState === 'charging') {
+            this.chargeTimer += dt;
+            let dx = this.chargeTargetX - this.x;
+            this.x += dx * 0.12 * dt;
+            if (Math.abs(dx) < 4 || this.chargeTimer > 40) {
+                this.chargeState = 'idle';
+                this.chargeTimer = 0;
+            }
+        }
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+        let hoverOffset = Math.sin(this.animTimer) * 8;
+        ctx.translate(0, hoverOffset);
+        let wingFlap = Math.sin(this.animTimer * 1.4) * 0.12;
+
+        if (this.bossType === 'sarge') {
+            ctx.fillStyle = this.config.metal;
+            ctx.strokeStyle = this.config.primary;
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.rect(-32, 10, 64, 55); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = this.config.primary;
+            ctx.strokeStyle = '#991b1b';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.rect(-52, 7, 20, 22); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.rect(32, 7, 20, 22); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#71717a';
+            ctx.fillRect(-58, 27, 16, 20);
+            ctx.fillRect(42, 27, 16, 20);
+            ctx.fillStyle = '#3f3f46';
+            ctx.fillRect(-70, 42, 24, 11);
+            ctx.fillRect(46, 42, 24, 11);
+            let muzzleGlow = this.attackTimer < 6;
+            ctx.fillStyle = muzzleGlow ? '#fef08a' : '#ef4444';
+            ctx.beginPath(); ctx.arc(-70, 47.5, 5, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(70, 47.5, 5, 0, Math.PI * 2); ctx.fill();
+            ctx.translate(0, -25);
+            drawWingPair(22, 0, 17, -3, 17, 11, Math.PI / 6, wingFlap);
+            drawChickenHead(26);
+            ctx.translate(0, 25);
+        } else if (this.bossType === 'marksman') {
+            [[-35, 82], [-14, 86], [14, 86], [35, 82]].forEach(([lx, ly], i) => {
+                let wobble = Math.sin(this.animTimer + i) * 2;
+                ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(0, 45); ctx.lineTo(lx, ly + wobble); ctx.stroke();
+                ctx.fillStyle = '#6d28d9';
+                ctx.beginPath(); ctx.arc(lx, ly + wobble, 3.5, 0, Math.PI * 2); ctx.fill();
+            });
+            ctx.fillStyle = this.config.metal;
+            ctx.strokeStyle = this.config.primary;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.rect(-22, 0, 44, 45); ctx.fill(); ctx.stroke();
+            ctx.save();
+            ctx.translate(16, 8);
+            ctx.rotate(-0.17);
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillRect(0, 0, 72, 9);
+            ctx.fillStyle = '#3f3f46';
+            ctx.fillRect(-2, -6, 16, 14);
+            ctx.fillStyle = '#0e7490';
+            ctx.fillRect(60, -14, 10, 15);
+            let scopeGlow = this.burstShotsRemaining > 0;
+            ctx.fillStyle = scopeGlow ? '#67e8f9' : '#22d3ee';
+            ctx.beginPath(); ctx.arc(65, -7, 3.5, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+            ctx.translate(0, -14);
+            drawWingPair(22, 0, 17, -3, 17, 11, Math.PI / 6, wingFlap);
+            drawChickenHead(26);
+            ctx.translate(0, 14);
+        } else if (this.bossType === 'broodmother') {
+            ctx.fillStyle = this.config.metal;
+            ctx.strokeStyle = this.config.primary;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.ellipse(0, 10, 42, 34, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            let sacPulse = 1 + Math.sin(this.animTimer * 2) * 0.05;
+            ctx.save();
+            ctx.translate(0, 40);
+            ctx.scale(sacPulse, sacPulse);
+            ctx.fillStyle = 'rgba(74,222,128,0.85)';
+            ctx.strokeStyle = '#eab308';
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.ellipse(0, 0, 19, 22, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#fde047';
+            [[-6, -6], [1, 4], [8, -6]].forEach(([ex, ey]) => {
+                ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.fill();
+            });
+            ctx.restore();
+            ctx.translate(0, -24);
+            drawWingPair(24, -8, 17, -3, 17, 11, Math.PI / 6, wingFlap);
+            drawChickenHead(26);
+            ctx.translate(0, 24);
+        } else {
+            let telegraphing = this.chargeState === 'telegraph';
+            if (telegraphing) {
+                ctx.strokeStyle = '#ef4444';
+                ctx.globalAlpha = 0.4 + Math.sin(this.animTimer * 4) * 0.3;
+                ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.rect(-46, -2, 92, 72); ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
+            ctx.fillStyle = this.config.metal;
+            ctx.strokeStyle = this.config.primary;
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.rect(-38, 2, 76, 63); ctx.fill(); ctx.stroke();
+            [-1, 1].forEach(side => {
+                ctx.save();
+                ctx.translate(side * 60, -11);
+                ctx.rotate(side * 0.26);
+                ctx.fillStyle = '#3f3f46';
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 1;
+                ctx.fillRect(-27.5, -7, 55, 14);
+                ctx.strokeRect(-27.5, -7, 55, 14);
+                let firing = this.attackTimer < 6;
+                ctx.fillStyle = firing ? '#fef08a' : '#ef4444';
+                ctx.beginPath(); ctx.arc(side * 27.5, 0, 6, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            });
+            ctx.translate(0, -33);
+            drawWingPair(24, 0, 18, -3, 18, 11, Math.PI / 6, wingFlap);
+            drawChickenHead(27);
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(-13, 8, 26, 5);
+            ctx.translate(0, 33);
+        }
+
+        ctx.restore();
+
+        let hbW = 180;
+        let hbH = 7;
+        let hbX = this.x + this.width / 2 - hbW / 2;
+        let hbY = this.y - 25;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.fillRect(hbX, hbY, hbW, hbH);
+        let ratio = Math.max(0, this.hp / this.maxHp);
+        ctx.fillStyle = this.config.primary;
+        ctx.fillRect(hbX, hbY, hbW * ratio, hbH);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(hbX, hbY, hbW, hbH);
+    }
+}
+
+class Asteroid {
+    constructor() {
+        this.x = Math.random() * (GAME_WIDTH - 60) + 30;
+        this.y = -60;
+        this.size = Math.random() * 25 + 20; 
+        this.width = this.size * 2;
+        this.height = this.size * 2;
+        this.speed = Math.random() * 2.0 + 1.5 + (wave * 0.08);
+        this.hp = Math.ceil(this.size / 10);
+        this.angle = 0;
+        this.rotSpeed = (Math.random() - 0.5) * 0.04;
+        
+        this.points = [];
+        let totalPoints = 7 + Math.floor(Math.random() * 5);
+        for(let i=0; i<totalPoints; i++) {
+            let angle = (i / totalPoints) * Math.PI * 2;
+            let offsetR = this.size * (0.85 + Math.random() * 0.3);
+            this.points.push({
+                x: Math.cos(angle) * offsetR,
+                y: Math.sin(angle) * offsetR
+            });
+        }
+    }
+
+    update(dt) {
+        this.y += this.speed * dt;
+        this.angle += this.rotSpeed * dt;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+
+        ctx.fillStyle = '#221e2b';
+        ctx.strokeStyle = '#635873';
+        ctx.lineWidth = 2;
+        
+        ctx.beginPath();
+        ctx.moveTo(this.points[0].x, this.points[0].y);
+        for(let i=1; i<this.points.length; i++) {
+            ctx.lineTo(this.points[i].x, this.points[i].y);
+        }
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+
+        ctx.restore();
+    }
+}
+
+class Projectile {
+    constructor(x, y, speed, type) {
+        this.x = x;
+        this.y = y;
+        this.speed = speed;
+        this.type = type;
+        this.width = (type === 'egg' || type === 'boss-laser') ? 22 : 5;
+        this.height = (type === 'egg' || type === 'boss-laser') ? 28 : 20;
+    }
+    update(dt) { this.y += this.speed * dt; }
+    draw() {
+        ctx.save();
+        if (this.type === 'egg') {
+            ctx.translate(this.x, this.y);
+            let eggGrad = ctx.createRadialGradient(-3, -4, 2, 0, 0, 13);
+            eggGrad.addColorStop(0, '#ffffff');
+            eggGrad.addColorStop(0.7, '#fffadc');
+            eggGrad.addColorStop(1, '#dfc299');
+            ctx.fillStyle = eggGrad;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 11, 14, 0, 0, Math.PI * 2);
+            ctx.fill();
+        } else if (this.type === 'boss-laser') {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#ff0033';
+            ctx.fillStyle = '#ff3333';
+            ctx.fillRect(this.x - 3, this.y, 6, 24);
+        } else {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00ffff';
+            ctx.fillStyle = '#00ffff';
+            ctx.fillRect(this.x - this.width / 2, this.y, this.width, this.height);
+        }
+        ctx.restore();
+    }
+}
+
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = Math.random() * 4 + 2;
+        this.vx = (Math.random() - 0.5) * 7;
+        this.vy = (Math.random() - 0.5) * 7;
+        this.alpha = 1;
+    }
+    update(dt) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.alpha -= 0.035 * dt;
+    }
+    draw() {
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.size, this.size);
+        ctx.restore();
+    }
+}
+
+function spawnChickenSwarm() {
+    chickens = [];
+    bossAdds = [];
+    eggs = [];
+    lasers = [];
+    activeBoss = null;
+    swarmDescentOffset = 0;
+
+    if (isBossWave(wave)) {
+        let sector = getSector(wave);
+        let lap = getBossLap(wave);
+        activeBoss = new TechChickenBoss(lap, BOSS_TYPES[sector]);
+        startBossMusic();
+        return;
+    }
+
+    startGameMusic();
+
+    let sector = getSector(wave);
+    let chickenType = CHICKEN_TYPES[sector];
+    let totalUnits = getTotalUnits(wave);
+    let targets = [];
+    let formationPattern = Math.floor(Math.random() * 4);
+
+    if (formationPattern === 0) {
+        let cols = 9;
+        let rows = Math.min(5, Math.ceil(totalUnits / cols));
+        let spacingX = 78;
+        let spacingY = 64;
+        let startX = (GAME_WIDTH - (cols * spacingX)) / 2;
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                targets.push({ x: startX + c * spacingX, y: 50 + r * spacingY });
+            }
+        }
+    } else if (formationPattern === 1) {
+        let midX = GAME_WIDTH / 2 - 23;
+        for (let i = 0; i < Math.min(totalUnits, 18); i++) {
+            let leftSide = (i % 2 === 0);
+            let step = Math.floor(i / 2) + 1;
+            let offsetWidth = step * 50;
+            let offsetHeight = step * 28;
+            let cX = leftSide ? midX - offsetWidth : midX + offsetWidth;
+            targets.push({ x: cX, y: 40 + offsetHeight });
+        }
+    } else if (formationPattern === 2) {
+        let leftColX = 70;
+        let rightColX = GAME_WIDTH - 116;
+        let rows = Math.min(5, Math.ceil(Math.ceil(totalUnits / 2) / 2));
+        for (let r = 0; r < rows; r++) {
+            targets.push({ x: leftColX, y: 50 + r * 66 });
+            targets.push({ x: leftColX + 66, y: 50 + r * 66 });
+            targets.push({ x: rightColX, y: 50 + r * 66 });
+            targets.push({ x: rightColX - 66, y: 50 + r * 66 });
+        }
+    } else {
+        let centerX = GAME_WIDTH / 2 - 23;
+        let centerY = 170;
+        let radius = 185;
+        for (let i = 0; i < totalUnits; i++) {
+            let angle = (i / totalUnits) * Math.PI * 2;
+            let cX = centerX + Math.cos(angle) * radius * (0.8 + Math.random() * 0.3);
+            let cY = centerY + Math.sin(angle) * radius * 0.6;
+            targets.push({ x: cX, y: cY });
+        }
+    }
+
+    // Group targets into squadrons that share an entry edge — top for the
+    // classic look, and from wave 5 also left/right for variety.
+    let squadSize = 5;
+    for (let i = 0; i < targets.length; i += squadSize) {
+        let squad = targets.slice(i, i + squadSize);
+        let edge = 'top';
+        if (wave >= 5) {
+            let roll = Math.random();
+            let sideChance = wave <= 10 ? 0.15 : 0.25;
+            edge = roll < (1 - sideChance * 2) ? 'top' : (roll < (1 - sideChance) ? 'left' : 'right');
+        }
+        let squadDelay = (i / squadSize) * 18;
+        squad.forEach((t, j) => {
+            let startX, startY;
+            if (edge === 'top') { startX = t.x; startY = -70; }
+            else if (edge === 'left') { startX = -70; startY = t.y; }
+            else { startX = GAME_WIDTH + 70; startY = t.y; }
+            chickens.push(new ChickenInvader(startX, startY, t.x, t.y, squadDelay + j * 4, chickenType));
+        });
+    }
+}
+
+let swarmDirection = 1.6;
+let edgeBounceCooldown = 0;
+let swarmDescentOffset = 0;
+function updateSwarmMechanics(dt) {
+    // Boss-add chicks (from Broodmother fights) drift straight down and
+    // are handled independent of the swarm/boss branches below.
+    for (let i = bossAdds.length - 1; i >= 0; i--) {
+        let add = bossAdds[i];
+        add.y += add.vy * dt;
+        add.animTimer += 0.22 * dt;
+        if (add.y + add.height >= player.y) {
+            bossAdds.splice(i, 1);
+            playerHit(false);
+            continue;
+        }
+        if (add.y > GAME_HEIGHT + 60) bossAdds.splice(i, 1);
+    }
+
+    if (activeBoss) {
+        activeBoss.update(dt);
+        if (activeBoss.y + activeBoss.height >= player.y) {
+            playerHit(true);
+        }
+        return;
+    }
+
+    chickens.forEach(c => { if (c.arriving) c.updateArrival(dt); });
+    let arrived = chickens.filter(c => !c.arriving);
+
+    let edgeReached = false;
+    let speedMultiplier = getSwarmSpeedMultiplier(wave);
+    let currentStepX = swarmDirection * speedMultiplier * dt;
+    let currentStepY = 0;
+    let breachTriggered = false;
+
+    if (edgeBounceCooldown > 0) edgeBounceCooldown -= dt;
+
+    for (let i = 0; i < arrived.length; i++) {
+        let nxtX = arrived[i].x + currentStepX;
+        if (nxtX <= 10 || nxtX >= GAME_WIDTH - arrived[i].width - 10) {
+            edgeReached = true;
+        }
+        if (arrived[i].y + arrived[i].height >= player.y) {
+            breachTriggered = true;
+        }
+    }
+
+    if (edgeReached && edgeBounceCooldown <= 0) {
+        swarmDirection *= -1;
+        currentStepX = swarmDirection * speedMultiplier * dt; // recompute so this frame moves AWAY from the wall
+        currentStepY = 22 + Math.min(15, wave * 1.5);
+        // Safety floor: a long wave means many bounces, and endless mode
+        // means waves can run long — never let the descent reach the ship.
+        if (arrived.length > 0) {
+            let lowestY = Math.max(...arrived.map(c => c.y));
+            let maxAllowedY = player.y - 160 - 44;
+            if (lowestY + currentStepY > maxAllowedY) {
+                currentStepY = Math.max(0, maxAllowedY - lowestY);
+            }
+        }
+        edgeBounceCooldown = 20; // ~1/3s at 60fps before another bounce can register
+        swarmDescentOffset += currentStepY;
+    }
+
+    arrived.forEach(c => c.update(currentStepX, currentStepY, dt));
+
+    // Hard clamp: never allow any arrived chicken past the side walls
+    for (let i = 0; i < arrived.length; i++) {
+        if (arrived[i].x < 10) arrived[i].x = 10;
+        if (arrived[i].x > GAME_WIDTH - arrived[i].width - 10) arrived[i].x = GAME_WIDTH - arrived[i].width - 10;
+    }
+
+    if (breachTriggered) {
+        playerHit(true);
+        return;
+    }
+
+    let dropProbability = getEggDropProbability(wave);
+
+    if (arrived.length > 0 && Math.random() < dropProbability * dt) {
+        let luckyChicken = arrived[Math.floor(Math.random() * arrived.length)];
+        eggs.push(new Projectile(luckyChicken.x + luckyChicken.width / 2, luckyChicken.y + luckyChicken.height, 4.0 + (wave * 0.15), 'egg'));
+        SFX.eggDrop();
+    }
+}
+
+// Global Damage Interception Engine
+function playerHit(resetSwarm = false) {
+    if (invulnerabilityTimer > 0) return; 
+
+    SFX.eggHit();
+    lives--;
+    
+    // Spawn massive spatial breakdown particle bursts
+    for (let p = 0; p < 45; p++) {
+        particles.push(new Particle(player.x + player.width / 2, player.y + player.height / 2, '#ffaa00'));
+        particles.push(new Particle(player.x + player.width / 2, player.y + player.height / 2, '#ff2a6d'));
+    }
+
+    if (lives <= 0) {
+        triggerGameOver();
+    } else {
+        // Safe-state Respawn Routine
+        invulnerabilityTimer = 110; 
+        player.x = GAME_WIDTH / 2 - player.width / 2;
+        eggs.length = 0;
+        lasers.length = 0;
+        asteroids.length = 0;
+
+        if (resetSwarm) {
+            bossAdds = [];
+            if (activeBoss) {
+                activeBoss.y = -160; 
+            } else if (chickens.length > 0) {
+                // Return remaining flock upwards to clear deployment vector
+                let minY = Math.min(...chickens.map(c => c.y));
+                let shiftY = minY - 50;
+                chickens.forEach(c => c.y -= shiftY);
+            }
+        }
+    }
+}
+
+function initGame() {
+    player = new PlayerShip();
+    score = 0;
+    wave = 1;
+    lives = MAX_LIVES;
+    invulnerabilityTimer = 40; 
+    edgeBounceCooldown = 0;
+    particles = [];
+    asteroids = [];
+    eggs = [];
+    lasers = [];
+    bossAdds = [];
+    sectorFlashTimer = 0;
+    spawnChickenSwarm();
+}
+
+function triggerGameOver() {
+    gameState = STATE_GAMEOVER;
+    isPointerShooting = false;
+    stopMusicLoop();
+    if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('cosmic_chicken_invaders_high_score', highScore);
+    }
+    screenText.style.display = 'block';
+    screenText.innerHTML = `MISSION TERMINATED<span class="sub-text">Final Score: ${score}<br>Record High: ${highScore}<br>Wave Reached: ${wave}</span><span class="sub-hint">Click to Deploy Again</span>`;
+}
+
+function advanceToNextWave() {
+    score += 1000;
+    activeBoss = null;
+    wave++;
+    sectorFlashTimer = 130;
+    sectorFlashText = `SECTOR CLEARED — WAVE ${wave}`;
+    spawnChickenSwarm();
+}
+
+function fireLaser() {
+    if (shootCooldown <= 0) {
+        SFX.shoot();
+        lasers.push(new Projectile(player.x + player.width / 2, player.y, -12, 'laser'));
+        shootCooldown = 10;
+    }
+}
+
+window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    if (gameState !== STATE_PLAYING && (e.code === 'Space' || e.code === 'Enter')) handleUIPress();
+});
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+window.addEventListener('mousemove', (e) => {
+    if (gameState === STATE_PLAYING) {
+        let pointerX = (e.clientX - offsetX) / scale;
+        player.x = pointerX - player.width / 2;
+    }
+});
+window.addEventListener('mousedown', (e) => {
+    if (e.target === screenText) return;
+    if (gameState === STATE_PLAYING) isPointerShooting = true;
+});
+window.addEventListener('mouseup', () => { isPointerShooting = false; });
+
+window.addEventListener('touchmove', (e) => {
+    if (gameState === STATE_PLAYING && e.touches.length > 0) {
+        let pointerX = (e.touches[0].clientX - offsetX) / scale;
+        player.x = pointerX - player.width / 2;
+    }
+}, { passive: true });
+window.addEventListener('touchstart', (e) => {
+    if (e.target === screenText) return;
+    if (gameState === STATE_PLAYING) isPointerShooting = true;
+}, { passive: true });
+window.addEventListener('touchend', () => { isPointerShooting = false; });
+
+screenText.addEventListener('click', (e) => {
+    e.stopPropagation();
+    handleUIPress();
+});
+
+function handleUIPress() {
+    if (gameState === STATE_START || gameState === STATE_GAMEOVER) {
+        getAudioCtx();
+        SFX.click();
+        initGame();
+        gameState = STATE_PLAYING;
+        screenText.style.display = 'none';
+    }
+}
+
+function checkCollision(rect1, rect2) {
+    let r1x = rect1.type === 'egg' || rect1.type === 'boss-laser' ? rect1.x - rect1.width/2 : rect1.x;
+    return r1x < rect2.x + rect2.width &&
+           r1x + rect1.width > rect2.x &&
+           rect1.y < rect2.y + rect2.height &&
+           rect1.y + rect1.height > rect2.y;
+}
+
+function checkCircleCollision(circle, rect) {
+    let closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+    let closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+    let distanceX = circle.x - closestX;
+    let distanceY = circle.y - closestY;
+    let distanceSquared = (distanceX * distanceX) + (distanceY * distanceY);
+    return distanceSquared < (circle.size * circle.size);
+}
+
+let lastFrameTime = performance.now();
+
+function loop() {
+    const now = performance.now();
+    let dt = (now - lastFrameTime) / (1000 / 60); // 1.0 == exactly 60fps worth of elapsed time
+    if (!isFinite(dt) || dt <= 0) dt = 1;
+    dt = Math.min(dt, 3); // clamp so a tab switch / stall doesn't cause a huge jump
+    lastFrameTime = now;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    let activeTheme = spaceThemes[getSector(wave)];
+
+    let spaceGrad = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 10, canvas.width/2, canvas.height/2, canvas.width);
+    spaceGrad.addColorStop(0, activeTheme.start);
+    spaceGrad.addColorStop(1, activeTheme.end);
+    ctx.fillStyle = spaceGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = activeTheme.starColor;
+    stars.forEach(s => {
+        s.y += s.speed * dt;
+        if (s.y > GAME_HEIGHT) { s.y = 0; s.x = Math.random() * GAME_WIDTH; }
+        ctx.fillRect(offsetX + s.x * scale, offsetY + s.y * scale, s.size * scale, s.size * scale);
+    });
+
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(scale, scale);
+
+    if (gameState === STATE_PLAYING) {
+        if (invulnerabilityTimer > 0) invulnerabilityTimer -= dt;
+
+        player.update(dt);
+        player.draw();
+
+        if (shootCooldown > 0) shootCooldown -= dt;
+
+        if (keys['Space'] || isPointerShooting) {
+            fireLaser();
+        }
+
+        updateSwarmMechanics(dt);
+
+        if (!activeBoss && Math.random() < (0.005 + (wave * 0.001)) * dt) {
+            if (asteroids.length < 4) asteroids.push(new Asteroid());
+        }
+
+        for(let a = asteroids.length - 1; a >= 0; a--) {
+            asteroids[a].update(dt);
+            asteroids[a].draw();
+
+            if (checkCircleCollision(asteroids[a], player)) {
+                playerHit(false);
+                break; // playerHit() may have cleared the asteroids array — stop iterating it
+            }
+
+            if (asteroids[a].y > GAME_HEIGHT + 60) {
+                asteroids.splice(a, 1);
+            }
+        }
+
+        for (let l = lasers.length - 1; l >= 0; l--) {
+            lasers[l].update(dt);
+            lasers[l].draw();
+
+            let hitSomething = false;
+
+            for(let a = asteroids.length - 1; a >= 0; a--) {
+                let astBox = { x: asteroids[a].x - asteroids[a].size, y: asteroids[a].y - asteroids[a].size, width: asteroids[a].size * 2, height: asteroids[a].size * 2 };
+                if(checkCollision(lasers[l], astBox)) {
+                    asteroids[a].hp--;
+                    hitSomething = true;
+                    SFX.asteroidHit();
+                    for(let p=0; p<6; p++) particles.push(new Particle(lasers[l].x, lasers[l].y, '#635873'));
+                    if(asteroids[a].hp <= 0) {
+                        for(let p=0; p<20; p++) particles.push(new Particle(asteroids[a].x, asteroids[a].y, '#ffea00'));
+                        asteroids.splice(a, 1);
+                        score += 30;
+                    }
+                    lasers.splice(l, 1);
+                    break;
+                }
+            }
+
+            if (hitSomething) continue;
+
+            if (activeBoss) {
+                if (checkCollision(lasers[l], activeBoss)) {
+                    activeBoss.hp--;
+                    lasers.splice(l, 1);
+                    score += 5;
+                    
+                    for(let p=0; p<5; p++) {
+                        particles.push(new Particle(activeBoss.x + activeBoss.width/2 + (Math.random()-0.5)*60, activeBoss.y + activeBoss.height/2 + (Math.random()-0.5)*40, activeBoss.config.primary));
+                    }
+
+                    if (activeBoss.hp <= 0) {
+                        SFX.bossExplode();
+                        for(let p=0; p<60; p++) {
+                            particles.push(new Particle(activeBoss.x + activeBoss.width/2, activeBoss.y + activeBoss.height/2, activeBoss.config.core));
+                            particles.push(new Particle(activeBoss.x + activeBoss.width/2, activeBoss.y + activeBoss.height/2, '#ffffff'));
+                        }
+                        advanceToNextWave();
+                        break; // spawnChickenSwarm() just reset lasers/chickens/eggs — stop iterating the old arrays
+                    } else {
+                        SFX.bossHit();
+                    }
+                    continue;
+                }
+
+                for (let a = bossAdds.length - 1; a >= 0; a--) {
+                    if (checkCollision(lasers[l], bossAdds[a])) {
+                        SFX.chickenPop();
+                        let pieces = ['#ffffff', '#fffadc', '#ff1a1a', '#ff9900'];
+                        for(let p=0; p<16; p++) {
+                            particles.push(new Particle(bossAdds[a].x + 23, bossAdds[a].y + 22, pieces[Math.floor(Math.random()*pieces.length)]));
+                        }
+                        bossAdds.splice(a, 1);
+                        lasers.splice(l, 1);
+                        score += 10;
+                        hitSomething = true;
+                        break;
+                    }
+                }
+
+                if (hitSomething) continue;
+            } else {
+                for (let c = chickens.length - 1; c >= 0; c--) {
+                    if (!chickens[c].arriving && checkCollision(lasers[l], chickens[c])) {
+                        chickens[c].hp--;
+                        lasers.splice(l, 1);
+                        if (chickens[c].hp <= 0) {
+                            SFX.chickenPop();
+                            let pieces = ['#ffffff', '#fffadc', '#ff1a1a', '#ff9900'];
+                            for(let p=0; p<16; p++) {
+                                particles.push(new Particle(chickens[c].x + 23, chickens[c].y + 22, pieces[Math.floor(Math.random()*pieces.length)]));
+                            }
+                            chickens.splice(c, 1);
+                            score += 10;
+                        } else {
+                            SFX.asteroidHit();
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (lasers[l] && lasers[l].y < -40) lasers.splice(l, 1);
+        }
+
+        for (let g = eggs.length - 1; g >= 0; g--) {
+            eggs[g].update(dt);
+            eggs[g].draw();
+
+            let eggBox = { x: eggs[g].x - 11, y: eggs[g].y - 14, width: 22, height: 28 };
+            if (checkCollision(eggBox, player)) {
+                playerHit(false);
+                break; // playerHit() may have cleared the eggs array — stop iterating it
+            }
+
+            if (eggs[g] && eggs[g].y > GAME_HEIGHT + 30) eggs.splice(g, 1);
+        }
+
+        if (!activeBoss && chickens.length === 0) {
+            wave++;
+            spawnChickenSwarm();
+        }
+    }
+
+    if (activeBoss) {
+        activeBoss.draw();
+        bossAdds.forEach(c => c.draw());
+    } else {
+        chickens.forEach(c => c.draw());
+    }
+
+    for (let p = particles.length - 1; p >= 0; p--) {
+        particles[p].update(dt);
+        particles[p].draw();
+        if (particles[p].alpha <= 0) particles.splice(p, 1);
+    }
+
+    // UI Head-Up Display Render Loop
+    ctx.save();
+    ctx.fillStyle = '#ffcc00';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(`SCORE: ${score}`, 20, 35);
+
+    if (activeBoss) {
+        ctx.fillStyle = '#ff3333';
+        ctx.fillText(`BOSS: ${activeBoss.config.name.toUpperCase()}`, 20, 65);
+    } else {
+        ctx.fillStyle = '#00ffff';
+        ctx.fillText(`WAVE: ${wave}`, 20, 65);
+    }
+
+    // Render Lives Interface Meter
+    ctx.fillStyle = '#ff2a6d';
+    ctx.fillText(`LIVES: ${'❤️'.repeat(Math.max(0, lives))}`, 20, 95);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`HI-SCORE: ${Math.max(score, highScore)}`, GAME_WIDTH - 20, 35);
+    ctx.restore();
+
+    if (sectorFlashTimer > 0) {
+        sectorFlashTimer -= dt;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, sectorFlashTimer / 40);
+        ctx.fillStyle = '#ffcc00';
+        ctx.font = 'bold 26px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(sectorFlashText, GAME_WIDTH / 2, 110);
+        ctx.restore();
+    }
+
+    ctx.restore();
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+
+</script>
+
+
+</body>
+</html>

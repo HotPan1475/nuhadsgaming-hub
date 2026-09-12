@@ -210,7 +210,7 @@
           <div class="row clickable" data-open="pane-cosmic">
             <div>
               <div class="path">cosmic-invaders <span class="flag">[top run]</span></div>
-              <div class="desc">ACE — wave 14, 48,200 pts</div>
+              <div class="desc" id="cosmic-top-desc">Loading…</div>
             </div>
             <span class="tag online">#1</span>
           </div>
@@ -232,13 +232,9 @@
         </div>
 
         <div class="board-pane" id="pane-cosmic">
-<pre class="table">RANK  NAME   WAVE   SCORE
-<span class="hi">01    ACE    14     48,200</span>
-02    MVP    12     39,650
-03    ZAP    10     31,010
-04    RGX    09     27,400
-05    LUX    08     22,150</pre>
-          <p class="comment" style="margin-top:14px;">// full cosmic-invaders board — real scores appear here once it's wired in</p>
+<pre class="table" id="cosmic-table">RANK  NAME   WAVE   SCORE
+Loading…</pre>
+          <p class="comment" style="margin-top:14px;">// live cosmic-invaders board, top 5 by score</p>
         </div>
 
       </div>
@@ -263,6 +259,53 @@
   document.querySelectorAll('[data-open]').forEach(el => {
     el.addEventListener('click', () => openPane(el.dataset.open));
   });
+
+  // ---- live leaderboard preview (Supabase) ----
+  const SUPABASE_URL = 'https://jxmlzzqrupedrannluos.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_brjw3X5HIu5utGhijlg9pw_dNMOnqoJ';
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+
+  function pad(str, len) {
+    str = String(str);
+    return str.length >= len ? str.slice(0, len) : str + ' '.repeat(len - str.length);
+  }
+
+  async function loadCosmicLeaderboard() {
+    const descEl = document.getElementById('cosmic-top-desc');
+    const tableEl = document.getElementById('cosmic-table');
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/scores?game_id=eq.cosmic-invaders&select=player_name,score,wave_reached&order=score.desc&limit=5`,
+        { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }
+      );
+      if (!res.ok) throw new Error('bad response');
+      const rows = await res.json();
+
+      if (!rows.length) {
+        descEl.textContent = "No runs yet — be the first.";
+        tableEl.textContent = "RANK  NAME   WAVE   SCORE\nNo runs yet — be the first once someone submits.";
+        return;
+      }
+
+      const top = rows[0];
+      descEl.textContent = `${top.player_name} — wave ${top.wave_reached ?? '?'}, ${top.score.toLocaleString()} pts`;
+
+      let lines = ['RANK  NAME   WAVE   SCORE'];
+      rows.forEach((r, i) => {
+        let line = `${pad(String(i + 1).padStart(2, '0'), 6)}${pad(escapeHtml(r.player_name).slice(0, 6), 7)}${pad(r.wave_reached ?? '-', 7)}${r.score.toLocaleString()}`;
+        lines.push(i === 0 ? `<span class="hi">${line}</span>` : line);
+      });
+      tableEl.innerHTML = lines.join('\n');
+    } catch (e) {
+      descEl.textContent = "Couldn't load — check your connection.";
+      tableEl.textContent = "RANK  NAME   WAVE   SCORE\nCouldn't load the board right now.";
+    }
+  }
+
+  loadCosmicLeaderboard();
 </script>
 </body>
 </html>

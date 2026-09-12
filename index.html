@@ -110,6 +110,8 @@
   .flag-btn:disabled{ opacity:0.4; cursor:not-allowed; }
   .board-pane{ display:none; }
   .board-pane.active{ display:block; }
+  .sub-pane{ display:none; }
+  .sub-pane.active{ display:block; }
   .row.clickable{ cursor:pointer; }
   .row.clickable:hover .path{ color:var(--green); }
 
@@ -162,11 +164,11 @@
         </div>
         <div class="row">
           <div>
-            <div class="path">./module-02.sh <span class="flag">[---]</span></div>
-            <div class="desc">A second module is being built. It'll connect to the same board as everything else.</div>
+            <div class="path">./snake-protocol.sh <span class="flag">[rwx]</span></div>
+            <div class="desc">Classic grid snake with a twist — a big node every 5th pickup, plus a 1P or 2P duel mode with a 2-minute clock.</div>
           </div>
-          <span class="tag locked">LOCKED</span>
-          <span class="run disabled">WAIT</span>
+          <span class="tag online">ONLINE</span>
+          <a class="run" href="./games/snake-protocol/">RUN</a>
         </div>
         <div class="row">
           <div>
@@ -202,7 +204,7 @@
         <div class="flags">
           <button class="flag-btn active" data-target="pane-overview">--overview</button>
           <button class="flag-btn" data-target="pane-cosmic">--game=cosmic-invaders</button>
-          <button class="flag-btn" disabled>--game=module-02 (locked)</button>
+          <button class="flag-btn" data-target="pane-snake">--game=snake-protocol</button>
           <button class="flag-btn" disabled>--game=module-03 (locked)</button>
         </div>
 
@@ -214,12 +216,12 @@
             </div>
             <span class="tag online">#1</span>
           </div>
-          <div class="row">
+          <div class="row clickable" data-open="pane-snake">
             <div>
-              <div class="path">module-02 <span class="flag">[top run]</span></div>
-              <div class="desc">No runs yet — be the first once it's live.</div>
+              <div class="path">snake-protocol <span class="flag">[top run]</span></div>
+              <div class="desc" id="snake-top-desc">Loading…</div>
             </div>
-            <span class="tag locked">—</span>
+            <span class="tag online">#1</span>
           </div>
           <div class="row">
             <div>
@@ -237,6 +239,22 @@ Loading…</pre>
           <p class="comment" style="margin-top:14px;">// live cosmic-invaders board, top 5 by score</p>
         </div>
 
+        <div class="board-pane" id="pane-snake">
+          <div class="flags">
+            <button class="flag-btn active" data-mode-target="pane-snake-solo">--mode=solo</button>
+            <button class="flag-btn" data-mode-target="pane-snake-duel">--mode=duel</button>
+          </div>
+          <div class="sub-pane active" id="pane-snake-solo">
+<pre class="table" id="snake-solo-table">RANK  NAME   SCORE
+Loading…</pre>
+          </div>
+          <div class="sub-pane" id="pane-snake-duel">
+<pre class="table" id="snake-duel-table">RANK  NAME   SCORE
+Loading…</pre>
+          </div>
+          <p class="comment" style="margin-top:14px;">// live snake-protocol board, top 5 by score — solo and duel scores are tracked separately</p>
+        </div>
+
       </div>
     </div>
   </div>
@@ -250,7 +268,7 @@ Loading…</pre>
 
 <script>
   function openPane(target){
-    document.querySelectorAll('.flag-btn').forEach(b => b.classList.toggle('active', b.dataset.target === target));
+    document.querySelectorAll('.flag-btn[data-target]').forEach(b => b.classList.toggle('active', b.dataset.target === target));
     document.querySelectorAll('.board-pane').forEach(p => p.classList.toggle('active', p.id === target));
   }
   document.querySelectorAll('.flag-btn[data-target]').forEach(btn => {
@@ -258,6 +276,17 @@ Loading…</pre>
   });
   document.querySelectorAll('[data-open]').forEach(el => {
     el.addEventListener('click', () => openPane(el.dataset.open));
+  });
+
+  function openSnakeMode(target){
+    document.querySelectorAll('#pane-snake .flag-btn[data-mode-target]').forEach(b => b.classList.toggle('active', b.dataset.modeTarget === target));
+    document.querySelectorAll('#pane-snake .sub-pane').forEach(p => p.classList.toggle('active', p.id === target));
+  }
+  document.querySelectorAll('#pane-snake .flag-btn[data-mode-target]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSnakeMode(btn.dataset.modeTarget);
+    });
   });
 
   // ---- live leaderboard preview (Supabase) ----
@@ -305,7 +334,57 @@ Loading…</pre>
     }
   }
 
+  async function loadSnakeTable(mode, tableElId) {
+    const tableEl = document.getElementById(tableElId);
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/scores?game_id=eq.snake-protocol&mode=eq.${mode}&select=player_name,score&order=score.desc&limit=5`,
+        { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }
+      );
+      if (!res.ok) throw new Error('bad response');
+      const rows = await res.json();
+
+      if (!rows.length) {
+        tableEl.textContent = "RANK  NAME   SCORE\nNo runs yet — be the first once someone submits.";
+        return [];
+      }
+
+      let lines = ['RANK  NAME   SCORE'];
+      rows.forEach((r, i) => {
+        let line = `${pad(String(i + 1).padStart(2, '0'), 6)}${pad(escapeHtml(r.player_name).slice(0, 6), 7)}${r.score.toLocaleString()}`;
+        lines.push(i === 0 ? `<span class="hi">${line}</span>` : line);
+      });
+      tableEl.innerHTML = lines.join('\n');
+      return rows;
+    } catch (e) {
+      tableEl.textContent = "RANK  NAME   SCORE\nCouldn't load the board right now.";
+      return [];
+    }
+  }
+
+  async function loadSnakeLeaderboard() {
+    const descEl = document.getElementById('snake-top-desc');
+    const [soloRows, duelRows] = await Promise.all([
+      loadSnakeTable('single', 'snake-solo-table'),
+      loadSnakeTable('two-player', 'snake-duel-table')
+    ]);
+
+    const soloTop = soloRows[0];
+    const duelTop = duelRows[0];
+    let best = null;
+    let bestMode = '';
+    if (soloTop && (!duelTop || soloTop.score >= duelTop.score)) { best = soloTop; bestMode = 'solo'; }
+    else if (duelTop) { best = duelTop; bestMode = 'duel'; }
+
+    if (!best) {
+      descEl.textContent = "No runs yet — be the first.";
+    } else {
+      descEl.textContent = `${best.player_name} — ${bestMode}, ${best.score.toLocaleString()} pts`;
+    }
+  }
+
   loadCosmicLeaderboard();
+  loadSnakeLeaderboard();
 </script>
 </body>
 </html>
